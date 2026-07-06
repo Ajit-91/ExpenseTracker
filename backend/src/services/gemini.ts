@@ -270,3 +270,45 @@ export async function processChatMessage(
     return `Error: ${error.message}. Falling back to rules... \n\n` + (await handleMockChat(userMessage, token));
   }
 }
+
+// AI categorization helper based on custom notes
+export async function categorizeExpenseWithAI(
+  amount: number,
+  originalDesc: string,
+  note: string
+): Promise<{ category: string; description: string }> {
+  try {
+    const ai = new GoogleGenerativeAI(process.env.GEMINI_API_KEY!);
+    const model = ai.getGenerativeModel({
+      model: 'gemini-2.5-flash',
+      generationConfig: { responseMimeType: 'application/json' }
+    });
+
+    const prompt = `
+You are a helpful financial helper.
+The user has an auto-logged transaction of amount Rs. ${amount} from SMS.
+They have provided a note describing what they spent this money on: "${note}".
+
+Based on the note, determine:
+1. The correct category. It MUST be exactly one of: Food, Travel, Shopping, Bills, Other.
+2. A clean, friendly, and concise description (e.g. if the note is "pizza", the description should be "Pizza". If the note is "taxi home", the description should be "Taxi Ride". If the note is "rent", the description should be "Rent").
+
+Respond ONLY with a JSON object in this format:
+{
+  "category": "Food | Travel | Shopping | Bills | Other",
+  "description": "Cleaned description string"
+}
+`;
+
+    const result = await model.generateContent(prompt);
+    const text = result.response.text();
+    const parsed = JSON.parse(text);
+    return {
+      category: ['Food', 'Travel', 'Shopping', 'Bills', 'Other'].includes(parsed.category) ? parsed.category : 'Other',
+      description: parsed.description || note || originalDesc,
+    };
+  } catch (e) {
+    console.error('Error categorizing expense with AI:', e);
+    return { category: 'Other', description: note || originalDesc };
+  }
+}
