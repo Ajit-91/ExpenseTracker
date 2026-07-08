@@ -35,7 +35,7 @@ router.post('/', async (req: AuthRequest, res: Response) => {
     console.log({ body: req.body });
     const validated = createExpenseSchema.parse(req.body);
     const { amount, category, description, note, date } = validated;
-    console.log({ validated })
+
     let finalCategory = category || 'Other';
     let finalDescription = description || 'SMS Expense';
 
