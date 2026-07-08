@@ -135,32 +135,7 @@ export const deleteExpense = createAsyncThunk(
   }
 );
 
-export const aiCategorizeExpense = createAsyncThunk(
-  'expenses/aiCategorize',
-  async ({ id, note }: { id: string; note: string }, { getState, rejectWithValue, dispatch }) => {
-    try {
-      console.log(`[aiCategorizeExpense] Initiating request. ID: ${id}, Note: "${note}"`);
-      const url = `${API_URL}/expenses/${id}/ai-categorize`;
-      console.log(`[aiCategorizeExpense] POST URL: ${url}`);
-      
-      const response = await axios.post(
-        url,
-        { note },
-        getAuthHeader(getState)
-      );
-      
-      console.log('[aiCategorizeExpense] Response received:', response.data);
-      const updatedExpense = response.data.expense;
-      const month = updatedExpense.date.substring(0, 7);
-      dispatch(fetchSummary(month));
-      dispatch(fetchBreakdown(month));
-      return updatedExpense;
-    } catch (err: any) {
-      console.error('[aiCategorizeExpense] Error:', err.response?.data || err.message);
-      return rejectWithValue(err.response?.data?.message || 'Failed to categorize expense with AI');
-    }
-  }
-);
+
 
 const expenseSlice = createSlice({
   name: 'expenses',
@@ -213,22 +188,7 @@ const expenseSlice = createSlice({
       state.list = state.list.filter((e) => e._id !== action.payload);
     });
 
-    // AI Categorize
-    builder.addCase(aiCategorizeExpense.pending, (state) => {
-      state.loading = true;
-      state.error = null;
-    });
-    builder.addCase(aiCategorizeExpense.fulfilled, (state, action: PayloadAction<Expense>) => {
-      state.loading = false;
-      const index = state.list.findIndex((e) => e._id === action.payload._id);
-      if (index !== -1) {
-        state.list[index] = action.payload;
-      }
-    });
-    builder.addCase(aiCategorizeExpense.rejected, (state, action: PayloadAction<any>) => {
-      state.loading = false;
-      state.error = action.payload;
-    });
+
   },
 });
 

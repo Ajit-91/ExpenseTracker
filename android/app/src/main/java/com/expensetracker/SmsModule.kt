@@ -13,29 +13,18 @@ import com.facebook.react.modules.core.DeviceEventManagerModule
 
 class SmsModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaModule(reactContext) {
 
-    private val smsReceiver = SmsReceiver()
-
-    private val noteReceiver = object : android.content.BroadcastReceiver() {
+    private val expenseCreatedReceiver = object : android.content.BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            android.util.Log.i("SmsModule", "noteReceiver triggered. Action: ${intent.action}")
-            if (intent.action == "com.expensetracker.SMS_NOTE_RESOLVED") {
-                val expenseId = intent.getStringExtra("expenseId") ?: ""
-                val note = intent.getStringExtra("note") ?: ""
-                android.util.Log.i("SmsModule", "Broadcasting note details to JS. ID: $expenseId, Note: $note")
-                
-                val params = Arguments.createMap().apply {
-                    putString("expenseId", expenseId)
-                    putString("note", note)
-                }
-                
+            android.util.Log.i("SmsModule", "expenseCreatedReceiver triggered. Action: ${intent.action}")
+            if (intent.action == "com.expensetracker.EXPENSE_CREATED") {
                 val reactContext = companionContext
                 if (reactContext != null && reactContext.hasActiveReactInstance()) {
-                    android.util.Log.i("SmsModule", "Emitting event 'onSmsNoteResolved' to React Native JS context")
+                    android.util.Log.i("SmsModule", "Emitting event 'onExpenseCreated' to React Native JS context")
                     reactContext
                         .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
-                        .emit("onSmsNoteResolved", params)
+                        .emit("onExpenseCreated", null)
                 } else {
-                    android.util.Log.w("SmsModule", "React Context was null or did not have active instance. Event skipped.")
+                    android.util.Log.w("SmsModule", "React Context was null or inactive. Event skipped.")
                 }
             }
         }
@@ -44,28 +33,16 @@ class SmsModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaMod
     init {
         companionContext = reactContext
         
-        // Dynamically register the SMS receiver
+        // Dynamically register the local Expense Created broadcast receiver
         try {
-            val filter = IntentFilter("android.provider.Telephony.SMS_RECEIVED")
+            val expenseFilter = IntentFilter("com.expensetracker.EXPENSE_CREATED")
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                reactContext.registerReceiver(smsReceiver, filter, Context.RECEIVER_EXPORTED)
+                reactContext.registerReceiver(expenseCreatedReceiver, expenseFilter, Context.RECEIVER_NOT_EXPORTED)
             } else {
-                reactContext.registerReceiver(smsReceiver, filter)
+                reactContext.registerReceiver(expenseCreatedReceiver, expenseFilter)
             }
         } catch (e: Exception) {
-            android.util.Log.e("SmsModule", "Failed to register dynamic SMS receiver: ${e.message}")
-        }
-
-        // Dynamically register the local Note broadcast receiver
-        try {
-            val noteFilter = IntentFilter("com.expensetracker.SMS_NOTE_RESOLVED")
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                reactContext.registerReceiver(noteReceiver, noteFilter, Context.RECEIVER_NOT_EXPORTED)
-            } else {
-                reactContext.registerReceiver(noteReceiver, noteFilter)
-            }
-        } catch (e: Exception) {
-            android.util.Log.e("SmsModule", "Failed to register dynamic note receiver: ${e.message}")
+            android.util.Log.e("SmsModule", "Failed to register dynamic expense created receiver: ${e.message}")
         }
     }
 
@@ -79,18 +56,19 @@ class SmsModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaMod
     @ReactMethod
     fun saveConfig(token: String, apiUrl: String) {
         val sharedPref = reactApplicationContext.getSharedPreferences("ExpenseTrackerPrefs", Context.MODE_PRIVATE)
-        sharedPref.edit().apply {
-            putString("auth_token", token)
-            putString("api_url", apiUrl)
-            apply()
-        }
+        val editor = sharedPref.edit()
+        editor.putString("auth_token", token)
+        editor.putString("api_url", apiUrl)
+        editor.apply()
         android.util.Log.i("SmsModule", "Config saved to SharedPreferences. URL: $apiUrl")
     }
 
     @ReactMethod
     fun clearConfig() {
         val sharedPref = reactApplicationContext.getSharedPreferences("ExpenseTrackerPrefs", Context.MODE_PRIVATE)
-        sharedPref.edit().clear().apply()
+        val editor = sharedPref.edit()
+        editor.clear()
+        editor.apply()
         android.util.Log.i("SmsModule", "Config cleared from SharedPreferences")
     }
 
@@ -120,21 +98,6 @@ class SmsModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaMod
     }
 
     @ReactMethod
-    fun showBubble(expenseId: String, amount: String, merchant: String) {
-        val context = reactApplicationContext
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && !android.provider.Settings.canDrawOverlays(context)) {
-            android.util.Log.w("SmsModule", "Overlay permission not granted. Cannot show bubble.")
-            return
-        }
-        val intent = Intent(context, FloatingBubbleService::class.java).apply {
-            putExtra("expenseId", expenseId)
-            putExtra("amount", amount)
-            putExtra("merchant", merchant)
-        }
-        context.startService(intent)
-    }
-
-    @ReactMethod
     fun addListener(eventName: String) {
         // Required for RCTDeviceEventEmitter lifecycle (Bridgeless Mode compatibility)
     }
@@ -146,33 +109,5 @@ class SmsModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaMod
 
     companion object {
         private var companionContext: ReactApplicationContext? = null
-        private var lastMessageHash: String? = null
-        private var lastMessageTime: Long = 0
-
-        fun sendSmsEvent(sender: String, body: String): Boolean {
-            val context = companionContext ?: return false
-            
-            // Deduplicate incoming events within a 2-second window
-            val msgHash = "$sender|$body"
-            val currentTime = System.currentTimeMillis()
-            if (msgHash == lastMessageHash && (currentTime - lastMessageTime) < 2000) {
-                android.util.Log.i("SmsModule", "Duplicate SMS event ignored: $sender")
-                return true // Handled/ignored, we don't want to re-process
-            }
-            lastMessageHash = msgHash
-            lastMessageTime = currentTime
-
-            if (context.hasActiveReactInstance()) {
-                val params = Arguments.createMap().apply {
-                    putString("sender", sender)
-                    putString("body", body)
-                }
-                context
-                    .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
-                    .emit("onSmsReceived", params)
-                return true
-            }
-            return false
-        }
     }
 }

@@ -10,16 +10,18 @@ export interface AuthRequest extends Request {
 export const authenticateToken = (req: AuthRequest, res: Response, next: NextFunction) => {
   const authHeader = req.headers['authorization'];
   const token = authHeader && authHeader.split(' ')[1];
-
+  console.log("Recieved Token: ", token);
   if (!token) {
     return res.status(401).json({ message: 'No token provided' });
   }
 
   jwt.verify(token, JWT_SECRET, (err, decoded: any) => {
     if (err) {
+      console.log(`Auth Failed for token: `, err)
       return res.status(403).json({ message: 'Failed to authenticate token' });
     }
     req.userId = decoded.userId;
+    console.log(`Auth Success for token: `, decoded)
     next();
   });
 };

@@ -1,5 +1,5 @@
 import { NativeModules, DeviceEventEmitter, PermissionsAndroid, Platform } from 'react-native';
-import { createExpense, aiCategorizeExpense } from '../redux/expenseSlice';
+import { fetchExpenses, fetchSummary, fetchBreakdown } from '../redux/expenseSlice';
 import { store } from '../redux/store';
 
 const { SmsModule } = NativeModules;
@@ -88,54 +88,16 @@ export function setupSmsListener() {
 
   console.log('Subscribing to native SMS events via DeviceEventEmitter...');
 
-  // 1. Listen for SMS received events
-  const subscription = DeviceEventEmitter.addListener('onSmsReceived', (event) => {
-    const { sender, body } = event;
-    console.log(`JS received SMS from: ${sender}, Body: ${body}`);
-
-    const parsed = parseTransactionSms(body);
-    if (parsed) {
-      console.log('Successfully parsed payment SMS:', parsed);
-
-      // Auto-dispatch createExpense and unwrap to get the resolved database expense _id
-      store.dispatch(
-        createExpense({
-          amount: parsed.amount,
-          category: parsed.category,
-          description: parsed.description,
-          date: new Date().toISOString().split('T')[0],
-        })
-      )
-        .unwrap()
-        .then((expense: any) => {
-          if (expense && expense._id && typeof SmsModule.showBubble === 'function') {
-            console.log(`Auto-logged expense ID ${expense._id}. Spawning native overlay bubble...`);
-            SmsModule.showBubble(
-              expense._id,
-              parsed.amount.toString(),
-              ""
-            );
-          }
-        })
-        .catch((err) => {
-          console.error('Failed to create expense or show bubble:', err);
-        });
-    } else {
-      console.log('Received SMS was not a standard debit/payment notification. Ignoring.');
-    }
-  });
-
-  // 2. Listen for resolved SMS notes from the floating bubble overlay
-  const noteSubscription = DeviceEventEmitter.addListener('onSmsNoteResolved', (event) => {
-    const { expenseId, note } = event;
-    console.log(`JS received SMS note resolved: ID=${expenseId}, Note=${note}`);
-
-    // Dispatch AI categorization thunk to update database and dashboard metrics
-    store.dispatch(aiCategorizeExpense({ id: expenseId, note }));
+  // Listen for native expense creation notifications to automatically refresh dashboard stats
+  const subscription = DeviceEventEmitter.addListener('onExpenseCreated', () => {
+    console.log('[smsReceiver] JS received background expense created notification. Refreshing dashboard...');
+    const month = new Date().toISOString().substring(0, 7);
+    store.dispatch(fetchExpenses());
+    store.dispatch(fetchSummary(month));
+    store.dispatch(fetchBreakdown(month));
   });
 
   return () => {
     subscription.remove();
-    noteSubscription.remove();
   };
 }

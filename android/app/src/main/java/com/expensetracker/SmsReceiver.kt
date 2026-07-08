@@ -20,25 +20,16 @@ class SmsReceiver : BroadcastReceiver() {
                         
                         Log.i("SmsReceiver", "SMS received from $sender: $body")
                         
-                        // Notify SmsModule of the received SMS.
-                        // If false is returned, it means the React Native JS runtime is inactive (app is closed).
-                        val handled = SmsModule.sendSmsEvent(sender, body)
-                        if (!handled) {
-                            Log.i("SmsReceiver", "React JS context is inactive. Parsing and logging SMS natively in background...")
-                            val amount = parseAmountFromSms(body)
-                            if (amount != null) {
-                                Log.i("SmsReceiver", "Parsed amount natively: $amount. Launching FloatingBubbleService directly...")
-                                val serviceIntent = Intent(context, FloatingBubbleService::class.java).apply {
-                                    putExtra("amount", amount.toString())
-                                    putExtra("merchant", "Unknown")
-                                    // expenseId is left null because it will be created in MongoDB when user saves the note
-                                }
-                                context.startService(serviceIntent)
-                            } else {
-                                Log.i("SmsReceiver", "SMS was a debit alert but amount could not be parsed.")
+                        val amount = parseAmountFromSms(body)
+                        if (amount != null) {
+                            Log.i("SmsReceiver", "Parsed amount natively: $amount. Launching FloatingBubbleService directly...")
+                            val serviceIntent = Intent(context, FloatingBubbleService::class.java).apply {
+                                putExtra("amount", amount.toString())
+                                putExtra("merchant", "Unknown")
                             }
+                            context.startService(serviceIntent)
                         } else {
-                            Log.i("SmsReceiver", "SMS successfully forwarded to active React Native context.")
+                            Log.i("SmsReceiver", "SMS was not a debit alert or amount could not be parsed.")
                         }
                     }
                 }

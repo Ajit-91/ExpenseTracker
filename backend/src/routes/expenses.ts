@@ -32,9 +32,10 @@ router.use(authenticateToken);
 // Create Expense
 router.post('/', async (req: AuthRequest, res: Response) => {
   try {
+    console.log({ body: req.body });
     const validated = createExpenseSchema.parse(req.body);
     const { amount, category, description, note, date } = validated;
-
+    console.log({ validated })
     let finalCategory = category || 'Other';
     let finalDescription = description || 'SMS Expense';
 
@@ -137,41 +138,6 @@ router.delete('/:id', async (req: AuthRequest, res: Response) => {
     return res.status(200).json({ success: true });
   } catch (error) {
     return res.status(500).json({ message: 'Server error deleting expense' });
-  }
-});
-
-// AI Categorize Expense based on a custom user note
-router.post('/:id/ai-categorize', async (req: AuthRequest, res: Response) => {
-  try {
-    const expenseId = req.params.id;
-    const { note } = req.body;
-    console.log(`[AI-Categorize] Request received for ID: ${expenseId}, Note: "${note}"`);
-
-    if (!note || typeof note !== 'string') {
-      console.warn(`[AI-Categorize] Validation failed. Note is missing or not a string:`, note);
-      return res.status(400).json({ message: 'Note is required' });
-    }
-
-    console.log(`[AI-Categorize] Querying database for expense with ID: ${expenseId} and User ID: ${req.userId}`);
-    const expense = await Expense.findOne({ _id: expenseId, userId: req.userId });
-    if (!expense) {
-      console.warn(`[AI-Categorize] Expense not found or unauthorized for ID: ${expenseId}`);
-      return res.status(404).json({ message: 'Expense not found' });
-    }
-
-    console.log(`[AI-Categorize] Expense found. Amount: ${expense.amount}, Current Desc: "${expense.description}". Calling Gemini...`);
-    const aiResult = await categorizeExpenseWithAI(expense.amount, expense.description, note);
-    console.log(`[AI-Categorize] Gemini returned result:`, aiResult);
-
-    expense.category = aiResult.category;
-    expense.description = aiResult.description;
-    await expense.save();
-    console.log(`[AI-Categorize] Successfully updated and saved expense details:`, expense);
-
-    return res.status(200).json({ success: true, expense });
-  } catch (error: any) {
-    console.error('AI categorization route error:', error);
-    return res.status(500).json({ message: 'Server error categorizing expense with AI' });
   }
 });
 

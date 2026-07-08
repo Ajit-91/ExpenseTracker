@@ -6,6 +6,7 @@ import android.content.Intent
 import android.graphics.Color
 import android.graphics.PixelFormat
 import android.graphics.drawable.GradientDrawable
+import android.os.Build
 import android.os.IBinder
 import android.util.TypedValue
 import android.view.Gravity
@@ -30,7 +31,6 @@ class FloatingBubbleService : Service() {
     private lateinit var bubbleParams: WindowManager.LayoutParams
     private lateinit var cardParams: WindowManager.LayoutParams
 
-    private var expenseId: String? = null
     private var amount: String? = null
     private var merchant: String? = null
 
@@ -38,10 +38,9 @@ class FloatingBubbleService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent != null) {
-            expenseId = intent.getStringExtra("expenseId")
             amount = intent.getStringExtra("amount")
             merchant = intent.getStringExtra("merchant")
-            android.util.Log.i("FloatingBubbleService", "onStartCommand received intent. expenseId: $expenseId, amount: $amount, merchant: $merchant")
+            android.util.Log.i("FloatingBubbleService", "onStartCommand received intent. amount: $amount, merchant: $merchant")
         } else {
             android.util.Log.w("FloatingBubbleService", "onStartCommand received null intent")
         }
@@ -71,18 +70,36 @@ class FloatingBubbleService : Service() {
         val context = this
         bubbleView = FrameLayout(context)
 
-        // Make a beautiful round circle with the app's purple theme
+        // Make a beautiful transparent circle container with a thin white border
         val shape = GradientDrawable()
         shape.shape = GradientDrawable.OVAL
-        shape.setColor(Color.parseColor("#6C63FF"))
+        shape.setColor(Color.TRANSPARENT)
         shape.setStroke(dpToPx(2f), Color.parseColor("#FFFFFF"))
         bubbleView?.background = shape
+        
+        // Add padding to keep the icon nicely nested inside the border
+        val padding = dpToPx(4f)
+        bubbleView?.setPadding(padding, padding, padding, padding)
 
-        // Inner edit icon (pencil)
+        // Inner app launcher icon
         val icon = ImageView(context)
-        icon.setImageResource(android.R.drawable.ic_menu_edit)
-        icon.setColorFilter(Color.WHITE)
-        val iconParams = FrameLayout.LayoutParams(dpToPx(24f), dpToPx(24f))
+        icon.setImageResource(R.mipmap.ic_launcher_round)
+        icon.scaleType = ImageView.ScaleType.FIT_CENTER
+        
+        // Clip the icon to a perfect circle to prevent square edges from leaking out
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            icon.outlineProvider = object : android.view.ViewOutlineProvider() {
+                override fun getOutline(view: View, outline: android.graphics.Outline) {
+                    outline.setOval(0, 0, view.width, view.height)
+                }
+            }
+            icon.clipToOutline = true
+        }
+
+        val iconParams = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT
+        )
         iconParams.gravity = Gravity.CENTER
         bubbleView?.addView(icon, iconParams)
 
@@ -226,29 +243,16 @@ class FloatingBubbleService : Service() {
         
         btnDone.setOnClickListener {
             val noteText = input.text.toString().trim()
-            android.util.Log.i("FloatingBubbleService", "Done button clicked. Note: '$noteText', expenseId: $expenseId")
+            android.util.Log.i("FloatingBubbleService", "Done button clicked. Note: '$noteText'")
             if (noteText.isNotEmpty()) {
                 val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
                 imm.hideSoftInputFromWindow(input.windowToken, 0)
 
-                if (expenseId != null) {
-                    // Send broadcast back to JS (App was open, placeholder exists)
-                    val broadcastIntent = Intent("com.expensetracker.SMS_NOTE_RESOLVED").apply {
-                        putExtra("expenseId", expenseId)
-                        putExtra("note", noteText)
-                        setPackage(packageName)
-                    }
-                    android.util.Log.i("FloatingBubbleService", "Sending explicit broadcast com.expensetracker.SMS_NOTE_RESOLVED...")
-                    sendBroadcast(broadcastIntent)
-                    stopSelf()
-                } else {
-                    // App was closed (expenseId is null). Log directly from Kotlin background thread
-                    android.util.Log.i("FloatingBubbleService", "App is closed. Logging natively via HTTP POST...")
-                    val context = this
-                    val currentAmount = amount ?: "0"
-                    createExpenseNatively(context, currentAmount, noteText)
-                    stopSelf()
-                }
+                android.util.Log.i("FloatingBubbleService", "Logging expense natively via background HTTP POST...")
+                val context = this
+                val currentAmount = amount ?: "0"
+                createExpenseNatively(context, currentAmount, noteText)
+                stopSelf()
             } else {
                 android.util.Log.w("FloatingBubbleService", "Validation failed. Note is empty!")
             }
@@ -347,7 +351,7 @@ class FloatingBubbleService : Service() {
                 android.util.Log.i("FloatingBubbleService", "Connecting to background endpoint: $url")
                 val conn = url.openConnection() as java.net.HttpURLConnection
                 conn.requestMethod = "POST"
-                conn.setRequestProperty("Content-Type", "application/json; utf-8")
+                conn.setRequestProperty("Content-Type", "application/json")
                 conn.setRequestProperty("Authorization", "Bearer $token")
                 conn.doOutput = true
 
@@ -355,18 +359,23 @@ class FloatingBubbleService : Service() {
                     put("amount", amountStr.toDouble())
                     put("note", noteText)
                 }
+                
+                val postDataBytes = jsonBody.toString().toByteArray(Charsets.UTF_8)
+                conn.setRequestProperty("Content-Length", postDataBytes.size.toString())
 
                 conn.outputStream.use { os ->
-                    java.io.OutputStreamWriter(os, "UTF-8").use { writer ->
-                        writer.write(jsonBody.toString())
-                        writer.flush()
-                    }
+                    os.write(postDataBytes)
+                    os.flush()
                 }
 
                 val responseCode = conn.responseCode
                 android.util.Log.i("FloatingBubbleService", "Natively created expense. HTTP Status: $responseCode")
                 if (responseCode == java.net.HttpURLConnection.HTTP_CREATED || responseCode == java.net.HttpURLConnection.HTTP_OK) {
-                    android.util.Log.i("FloatingBubbleService", "Background expense created successfully.")
+                    android.util.Log.i("FloatingBubbleService", "Background expense created successfully. Broadcasting com.expensetracker.EXPENSE_CREATED...")
+                    val broadcastIntent = Intent("com.expensetracker.EXPENSE_CREATED").apply {
+                        setPackage(context.packageName)
+                    }
+                    context.sendBroadcast(broadcastIntent)
                 } else {
                     conn.errorStream?.use { err ->
                         val response = err.bufferedReader().use { it.readText() }

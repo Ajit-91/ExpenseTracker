@@ -12,8 +12,6 @@ import SignupScreen from '../screens/SignupScreen.tsx';
 import MainTabScreen from '../screens/MainTabScreen.tsx';
 import AddEditExpenseScreen from '../screens/AddEditExpenseScreen.tsx';
 
-const { SmsModule } = NativeModules;
-
 export type RootStackParamList = {
   Login: undefined;
   Signup: undefined;
@@ -95,6 +93,7 @@ export default function AppNavigator() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    const SmsModule = NativeModules.SmsModule;
     if (token) {
       console.log('[AppNavigator] Token changed, syncing config to native SharedPreferences...');
       if (Platform.OS === 'android' && SmsModule && typeof SmsModule.saveConfig === 'function') {

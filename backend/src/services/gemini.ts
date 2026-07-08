@@ -285,13 +285,13 @@ export async function categorizeExpenseWithAI(
     });
 
     const prompt = `
-You are a helpful financial helper.
+You are a helpful financial assistant.
 The user has an auto-logged transaction of amount Rs. ${amount} from SMS.
 They have provided a note describing what they spent this money on: "${note}".
 
 Based on the note, determine:
 1. The correct category. It MUST be exactly one of: Food, Travel, Shopping, Bills, Other.
-2. A clean, friendly, and concise description (e.g. if the note is "pizza", the description should be "Pizza". If the note is "taxi home", the description should be "Taxi Ride". If the note is "rent", the description should be "Rent").
+2. A clean, friendly description that summarizes the expense. You MUST preserve key context from the user's note, such as the merchant, purpose, or who they paid (e.g. if the note is "for pizza to arpit", the description should be "Pizza - Arpit" or "Pizza to Arpit". If the note is "taxi home", the description should be "Taxi Home" or "Taxi Ride"). Do not strip away names, places, or important details from the note.
 
 Respond ONLY with a JSON object in this format:
 {
