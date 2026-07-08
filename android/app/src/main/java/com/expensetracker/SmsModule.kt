@@ -77,6 +77,24 @@ class SmsModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaMod
     }
 
     @ReactMethod
+    fun saveConfig(token: String, apiUrl: String) {
+        val sharedPref = reactApplicationContext.getSharedPreferences("ExpenseTrackerPrefs", Context.MODE_PRIVATE)
+        sharedPref.edit().apply {
+            putString("auth_token", token)
+            putString("api_url", apiUrl)
+            apply()
+        }
+        android.util.Log.i("SmsModule", "Config saved to SharedPreferences. URL: $apiUrl")
+    }
+
+    @ReactMethod
+    fun clearConfig() {
+        val sharedPref = reactApplicationContext.getSharedPreferences("ExpenseTrackerPrefs", Context.MODE_PRIVATE)
+        sharedPref.edit().clear().apply()
+        android.util.Log.i("SmsModule", "Config cleared from SharedPreferences")
+    }
+
+    @ReactMethod
     fun requestOverlayPermission() {
         val context = reactApplicationContext
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -131,15 +149,15 @@ class SmsModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaMod
         private var lastMessageHash: String? = null
         private var lastMessageTime: Long = 0
 
-        fun sendSmsEvent(sender: String, body: String) {
-            val context = companionContext ?: return
+        fun sendSmsEvent(sender: String, body: String): Boolean {
+            val context = companionContext ?: return false
             
             // Deduplicate incoming events within a 2-second window
             val msgHash = "$sender|$body"
             val currentTime = System.currentTimeMillis()
             if (msgHash == lastMessageHash && (currentTime - lastMessageTime) < 2000) {
                 android.util.Log.i("SmsModule", "Duplicate SMS event ignored: $sender")
-                return
+                return true // Handled/ignored, we don't want to re-process
             }
             lastMessageHash = msgHash
             lastMessageTime = currentTime
@@ -152,7 +170,9 @@ class SmsModule(reactContext: ReactApplicationContext) : ReactContextBaseJavaMod
                 context
                     .getJSModule(DeviceEventManagerModule.RCTDeviceEventEmitter::class.java)
                     .emit("onSmsReceived", params)
+                return true
             }
+            return false
         }
     }
 }

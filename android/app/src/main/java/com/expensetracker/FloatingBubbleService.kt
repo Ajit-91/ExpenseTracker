@@ -227,22 +227,30 @@ class FloatingBubbleService : Service() {
         btnDone.setOnClickListener {
             val noteText = input.text.toString().trim()
             android.util.Log.i("FloatingBubbleService", "Done button clicked. Note: '$noteText', expenseId: $expenseId")
-            if (noteText.isNotEmpty() && expenseId != null) {
-                // Send broadcast back to JS
-                val broadcastIntent = Intent("com.expensetracker.SMS_NOTE_RESOLVED").apply {
-                    putExtra("expenseId", expenseId)
-                    putExtra("note", noteText)
-                    setPackage(packageName) // Explicit package name ensures receipt
-                }
-                android.util.Log.i("FloatingBubbleService", "Sending explicit broadcast com.expensetracker.SMS_NOTE_RESOLVED...")
-                sendBroadcast(broadcastIntent)
-                
-                // Hide keyboard and close service
+            if (noteText.isNotEmpty()) {
                 val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
                 imm.hideSoftInputFromWindow(input.windowToken, 0)
-                stopSelf()
+
+                if (expenseId != null) {
+                    // Send broadcast back to JS (App was open, placeholder exists)
+                    val broadcastIntent = Intent("com.expensetracker.SMS_NOTE_RESOLVED").apply {
+                        putExtra("expenseId", expenseId)
+                        putExtra("note", noteText)
+                        setPackage(packageName)
+                    }
+                    android.util.Log.i("FloatingBubbleService", "Sending explicit broadcast com.expensetracker.SMS_NOTE_RESOLVED...")
+                    sendBroadcast(broadcastIntent)
+                    stopSelf()
+                } else {
+                    // App was closed (expenseId is null). Log directly from Kotlin background thread
+                    android.util.Log.i("FloatingBubbleService", "App is closed. Logging natively via HTTP POST...")
+                    val context = this
+                    val currentAmount = amount ?: "0"
+                    createExpenseNatively(context, currentAmount, noteText)
+                    stopSelf()
+                }
             } else {
-                android.util.Log.w("FloatingBubbleService", "Validation failed. Note is empty or expenseId is null!")
+                android.util.Log.w("FloatingBubbleService", "Validation failed. Note is empty!")
             }
         }
         val doneParams = LinearLayout.LayoutParams(
@@ -322,7 +330,55 @@ class FloatingBubbleService : Service() {
             android.util.Log.e("FloatingBubbleService", "Failed to remove views: ${e.message}")
         }
     }
+    private fun createExpenseNatively(context: Context, amountStr: String, noteText: String) {
+        Thread {
+            try {
+                val sharedPref = context.getSharedPreferences("ExpenseTrackerPrefs", Context.MODE_PRIVATE)
+                val token = sharedPref.getString("auth_token", null)
+                val apiUrl = sharedPref.getString("api_url", null)
 
+                if (token == null || apiUrl == null) {
+                    android.util.Log.e("FloatingBubbleService", "Missing config in SharedPreferences. Token exists: ${token != null}, URL: $apiUrl")
+                    return@Thread
+                }
+
+                // Call POST /expenses
+                val url = java.net.URL("$apiUrl/expenses")
+                android.util.Log.i("FloatingBubbleService", "Connecting to background endpoint: $url")
+                val conn = url.openConnection() as java.net.HttpURLConnection
+                conn.requestMethod = "POST"
+                conn.setRequestProperty("Content-Type", "application/json; utf-8")
+                conn.setRequestProperty("Authorization", "Bearer $token")
+                conn.doOutput = true
+
+                val jsonBody = org.json.JSONObject().apply {
+                    put("amount", amountStr.toDouble())
+                    put("note", noteText)
+                }
+
+                conn.outputStream.use { os ->
+                    java.io.OutputStreamWriter(os, "UTF-8").use { writer ->
+                        writer.write(jsonBody.toString())
+                        writer.flush()
+                    }
+                }
+
+                val responseCode = conn.responseCode
+                android.util.Log.i("FloatingBubbleService", "Natively created expense. HTTP Status: $responseCode")
+                if (responseCode == java.net.HttpURLConnection.HTTP_CREATED || responseCode == java.net.HttpURLConnection.HTTP_OK) {
+                    android.util.Log.i("FloatingBubbleService", "Background expense created successfully.")
+                } else {
+                    conn.errorStream?.use { err ->
+                        val response = err.bufferedReader().use { it.readText() }
+                        android.util.Log.e("FloatingBubbleService", "API Error Response: $response")
+                    }
+                }
+                conn.disconnect()
+            } catch (e: Exception) {
+                android.util.Log.e("FloatingBubbleService", "Error posting native expense: ${e.message}", e)
+            }
+        }.start()
+    }
     override fun onDestroy() {
         super.onDestroy()
         removeOverlay()

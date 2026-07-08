@@ -9,8 +9,9 @@ const router = Router();
 // Zod schemas for validation
 const createExpenseSchema = z.object({
   amount: z.number().positive(),
-  category: z.string().min(1),
-  description: z.string().min(1),
+  category: z.string().min(1).optional(),
+  description: z.string().min(1).optional(),
+  note: z.string().optional(),
   date: z.string().refine((val) => !isNaN(Date.parse(val)), {
     message: "Invalid date format, must be YYYY-MM-DD",
   }).optional(),
@@ -32,22 +33,39 @@ router.use(authenticateToken);
 router.post('/', async (req: AuthRequest, res: Response) => {
   try {
     const validated = createExpenseSchema.parse(req.body);
-    const { amount, category, description, date } = validated;
+    const { amount, category, description, note, date } = validated;
+
+    let finalCategory = category || 'Other';
+    let finalDescription = description || 'SMS Expense';
+
+    if (note) {
+      console.log(`[Create-Expense] Note provided: "${note}". Calling Gemini for categorization...`);
+      const aiResult = await categorizeExpenseWithAI(amount, finalDescription, note);
+      finalCategory = aiResult.category;
+      finalDescription = aiResult.description;
+      console.log(`[Create-Expense] Gemini resolved. Category: ${finalCategory}, Desc: ${finalDescription}`);
+    } else {
+      if (!category || !description) {
+        return res.status(400).json({ message: 'Category and Description are required when note is not provided' });
+      }
+    }
 
     const expense = new Expense({
       userId: req.userId,
       amount,
-      category,
-      description,
+      category: finalCategory,
+      description: finalDescription,
       date: date ? new Date(date) : new Date(),
     });
 
     await expense.save();
+    console.log(`[Create-Expense] Saved expense:`, expense);
     return res.status(201).json({ success: true, expenseId: expense._id, expense });
   } catch (error) {
     if (error instanceof z.ZodError) {
       return res.status(400).json({ message: error.errors[0].message });
     }
+    console.error('Create expense error:', error);
     return res.status(500).json({ message: 'Server error creating expense' });
   }
 });

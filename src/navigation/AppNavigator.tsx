@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { View, ActivityIndicator } from 'react-native';
+import { View, ActivityIndicator, NativeModules, Platform } from 'react-native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 import { NavigationContainer } from '@react-navigation/native';
 import { useDispatch, useSelector } from 'react-redux';
@@ -11,6 +11,8 @@ import LoginScreen from '../screens/LoginScreen.tsx';
 import SignupScreen from '../screens/SignupScreen.tsx';
 import MainTabScreen from '../screens/MainTabScreen.tsx';
 import AddEditExpenseScreen from '../screens/AddEditExpenseScreen.tsx';
+
+const { SmsModule } = NativeModules;
 
 export type RootStackParamList = {
   Login: undefined;
@@ -91,6 +93,20 @@ export default function AppNavigator() {
   const token = useSelector((state: RootState) => state.auth.token);
   const dispatch = useDispatch();
   const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    if (token) {
+      console.log('[AppNavigator] Token changed, syncing config to native SharedPreferences...');
+      if (Platform.OS === 'android' && SmsModule && typeof SmsModule.saveConfig === 'function') {
+        SmsModule.saveConfig(token, process.env.API_URL || '');
+      }
+    } else {
+      console.log('[AppNavigator] Token cleared, wiping native SharedPreferences config...');
+      if (Platform.OS === 'android' && SmsModule && typeof SmsModule.clearConfig === 'function') {
+        SmsModule.clearConfig();
+      }
+    }
+  }, [token]);
 
   useEffect(() => {
     const checkSession = async () => {
