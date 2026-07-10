@@ -2,6 +2,8 @@ import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
 import { connectDB } from './config/db';
+import path from 'path';
+import axios from 'axios';
 import authRoutes from './routes/auth';
 import expenseRoutes from './routes/expenses';
 import analyticsRoutes from './routes/analytics';
@@ -19,11 +21,37 @@ connectDB();
 app.use(cors());
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+app.use(express.static(path.join(__dirname, '../public')));
 
 // Log requests
 app.use((req, res, next) => {
   console.log(`[${new Date().toISOString()}] ${req.method} ${req.url}`);
   next();
+});
+
+// Proxy route to stream APK download from GitHub Release directly
+app.get('/download-apk', async (req, res) => {
+  try {
+    const apkUrl = process.env.APK_DOWNLOAD_URL;
+    console.log(`[Download] Proxying APK download from: ${apkUrl}`);
+
+    const response = await axios({
+      method: 'get',
+      url: apkUrl,
+      responseType: 'stream',
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      }
+    });
+
+    res.setHeader('Content-Type', 'application/vnd.android.package-archive');
+    res.setHeader('Content-Disposition', 'attachment; filename="ExpenseTracker.apk"');
+
+    response.data.pipe(res);
+  } catch (error: any) {
+    console.error('[Download] Failed to proxy APK download:', error.message);
+    res.status(500).send('Failed to download APK. Please try again later.');
+  }
 });
 
 // Routes
