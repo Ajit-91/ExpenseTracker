@@ -34,6 +34,10 @@ class FloatingBubbleService : Service() {
     private var amount: String? = null
     private var merchant: String? = null
 
+    private var inputView: EditText? = null
+    private var btnDoneView: Button? = null
+    private var btnCancelView: Button? = null
+
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -189,6 +193,7 @@ class FloatingBubbleService : Service() {
 
         // EditText for User's Note
         val input = EditText(context)
+        inputView = input
         input.hint = "Add details (e.g. coffee, lunch)"
         input.setHintTextColor(Color.parseColor("#888899"))
         input.setTextColor(Color.WHITE)
@@ -216,6 +221,7 @@ class FloatingBubbleService : Service() {
 
         // Cancel Button
         val btnCancel = Button(context)
+        btnCancelView = btnCancel
         btnCancel.text = "CANCEL"
         btnCancel.setTextColor(Color.parseColor("#FF4A4A"))
         btnCancel.background = null
@@ -232,6 +238,7 @@ class FloatingBubbleService : Service() {
 
         // Done Button
         val btnDone = Button(context)
+        btnDoneView = btnDone
         btnDone.text = "DONE"
         btnDone.setTextColor(Color.WHITE)
         
@@ -245,6 +252,13 @@ class FloatingBubbleService : Service() {
             val noteText = input.text.toString().trim()
             android.util.Log.i("FloatingBubbleService", "Done button clicked. Note: '$noteText'")
             if (noteText.isNotEmpty()) {
+                // Lock the UI to prevent double submission
+                input.isEnabled = false
+                btnCancel.isEnabled = false
+                btnDone.isEnabled = false
+                btnDone.text = "Saving..."
+                btnDone.setTextColor(Color.parseColor("#888899"))
+
                 val imm = getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager
                 imm.hideSoftInputFromWindow(input.windowToken, 0)
 
@@ -252,7 +266,6 @@ class FloatingBubbleService : Service() {
                 val context = this
                 val currentAmount = amount ?: "0"
                 createExpenseNatively(context, currentAmount, noteText)
-                stopSelf()
             } else {
                 android.util.Log.w("FloatingBubbleService", "Validation failed. Note is empty!")
             }
@@ -335,14 +348,25 @@ class FloatingBubbleService : Service() {
         }
     }
     private fun createExpenseNatively(context: Context, amountStr: String, noteText: String) {
+        val handler = android.os.Handler(android.os.Looper.getMainLooper())
         Thread {
+            var success = false
+            var errorMsg = "Sync failed"
             try {
                 val sharedPref = context.getSharedPreferences("ExpenseTrackerPrefs", Context.MODE_PRIVATE)
                 val token = sharedPref.getString("auth_token", null)
                 val apiUrl = sharedPref.getString("api_url", null)
 
                 if (token == null || apiUrl == null) {
-                    android.util.Log.e("FloatingBubbleService", "Missing config in SharedPreferences. Token exists: ${token != null}, URL: $apiUrl")
+                    android.util.Log.e("FloatingBubbleService", "Missing config in SharedPreferences")
+                    errorMsg = "Credentials missing. Please open the app first."
+                    handler.post {
+                        btnDoneView?.text = "RETRY"
+                        btnDoneView?.isEnabled = true
+                        btnCancelView?.isEnabled = true
+                        inputView?.isEnabled = true
+                        android.widget.Toast.makeText(context, errorMsg, android.widget.Toast.LENGTH_LONG).show()
+                    }
                     return@Thread
                 }
 
@@ -353,6 +377,10 @@ class FloatingBubbleService : Service() {
                 conn.requestMethod = "POST"
                 conn.setRequestProperty("Content-Type", "application/json")
                 conn.setRequestProperty("Authorization", "Bearer $token")
+                
+                // Keep connection open up to 120 seconds to allow Render free tier spin-up
+                conn.connectTimeout = 120000
+                conn.readTimeout = 120000
                 conn.doOutput = true
 
                 val jsonBody = org.json.JSONObject().apply {
@@ -376,15 +404,42 @@ class FloatingBubbleService : Service() {
                         setPackage(context.packageName)
                     }
                     context.sendBroadcast(broadcastIntent)
+                    success = true
                 } else {
                     conn.errorStream?.use { err ->
                         val response = err.bufferedReader().use { it.readText() }
                         android.util.Log.e("FloatingBubbleService", "API Error Response: $response")
+                        try {
+                            val jsonObj = org.json.JSONObject(response)
+                            errorMsg = jsonObj.optString("message", "Sync failed")
+                        } catch (e: Exception) {
+                            errorMsg = "Error code: $responseCode"
+                        }
                     }
                 }
                 conn.disconnect()
             } catch (e: Exception) {
                 android.util.Log.e("FloatingBubbleService", "Error posting native expense: ${e.message}", e)
+                errorMsg = "Network timeout. Render server starting up, please try again."
+            }
+
+            // Sync UI updates back to the Main Looper Thread
+            handler.post {
+                if (success) {
+                    btnDoneView?.text = "Saved!"
+                    btnDoneView?.setTextColor(Color.parseColor("#4CAF50"))
+                    handler.postDelayed({
+                        stopSelf()
+                    }, 1000)
+                } else {
+                    // Re-enable interface and let the user tap retry
+                    inputView?.isEnabled = true
+                    btnCancelView?.isEnabled = true
+                    btnDoneView?.isEnabled = true
+                    btnDoneView?.text = "RETRY"
+                    btnDoneView?.setTextColor(Color.WHITE)
+                    android.widget.Toast.makeText(context, errorMsg, android.widget.Toast.LENGTH_LONG).show()
+                }
             }
         }.start()
     }
